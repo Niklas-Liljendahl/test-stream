@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Self-Hosted Video Conferencing</title>
+  </head>
+  <body>
+    <video id="localVideo" autoplay muted></video>
+    <video id="remoteVideo" autoplay></video>
+    <button id="startCall">Start Call</button>
+
+    <script>
+      const signalingServer = new WebSocket(
+        "ws://app-241210210900.azurewebsites.net/ws?id=" + Math.random().toString(36).substr(2, 9)
+      );
+      const localVideo = document.getElementById("localVideo");
+      const remoteVideo = document.getElementById("remoteVideo");
+      const startCall = document.getElementById("startCall");
+
+      let localStream, peerConnection;
+
+      const config = {
+        iceServers: [
+          { urls: "stun:yourserver.com:3478" },
+          {
+            urls: "turn:yourserver.com:3478",
+            username: "youruser",
+            credential: "yourpassword",
+          },
+        ],
+      };
+
+      signalingServer.onmessage = async (message) => {
+        const data = JSON.parse(message.data);
+
+        if (data.type === "offer") {
+          await peerConnection.setRemoteDescription(
+            new RTCSessionDescription(data)
+          );
+          const answer = await peerConnection.createAnswer();
+          await peerConnection.setLocalDescription(answer);
+          signalingServer.send(JSON.stringify(peerConnection.localDescription));
+        } else if (data.type === "answer") {
+          await peerConnection.setRemoteDescription(
+            new RTCSessionDescription(data)
+          );
+        } else if (data.type === "candidate") {
+          peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+        }
+      };
+
+      startCall.onclick = async () => {
+        localStream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: true,
+        });
+        localVideo.srcObject = localStream;
+
+        peerConnection = new RTCPeerConnection(config);
+
+        localStream.getTracks().forEach((track) => {
+          peerConnection.addTrack(track, localStream);
+        });
+
+        peerConnection.ontrack = (event) => {
+          remoteVideo.srcObject = event.streams[0];
+        };
+
+        peerConnection.onicecandidate = (event) => {
+          console.log("EVENT", event);
+          if (event.candidate) {
+            signalingServer.send(
+              JSON.stringify({ type: "candidate", candidate: event.candidate })
+            );
+          }
+        };
+
+        const offer = await peerConnection.createOffer();
+        await peerConnection.setLocalDescription(offer);
+
+        signalingServer.send(JSON.stringify(offer));
+      };
+    </script>
+  </body>
+</html>
+
